@@ -47,6 +47,19 @@ mysql-conf-deploy-s1:
 	sudo cp -r etc/s1/mysql/* $(MYSQL_CONF)
 	sudo systemctl restart mysql
 
+.PHONY: nginx-conf-deploy-s2
+nginx-conf-deploy-s2:
+	echo "nginx conf deploy"
+	sudo cp -r etc/s2/nginx/* $(NGINX_CONF)
+	sudo nginx -t
+	sudo systemctl restart nginx
+
+.PHONY: mysql-conf-deploy-s2
+mysql-conf-deploy-s2:
+	echo "mysql conf deploy"
+	sudo cp -r etc/s2/mysql/* $(MYSQL_CONF)
+	sudo systemctl restart mysql
+
 .PHONY: app-deploy
 app-deploy:
 	echo "app deploy"
