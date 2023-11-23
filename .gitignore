@@ -1,0 +1,12 @@
+/sql/1_InitData.sql
+*.pprof
+NoImage.jpg
+ec256-public.pem
+frontend
+nodejs
+perl
+php
+public
+python
+ruby
+rust
