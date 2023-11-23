@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
@@ -414,39 +413,6 @@ func postInitialize(c echo.Context) error {
 		userCache.Add(user.JIAUserID)
 	}
 
-	// 画像フォルダの初期化
-	err = os.RemoveAll(frontendContentsPath + "/icon")
-	if err != nil {
-		c.Logger().Error(err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	err = os.Mkdir(frontendContentsPath+"/icon", 0755)
-	if err != nil {
-		c.Logger().Error(err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	// 画像の初期化
-	var isus []struct {
-		JIAIsuUUID string `db:"jia_isu_uuid"`
-		Image      []byte `db:"image"`
-	}
-	err = s2Db.Select(&isus, "SELECT jia_isu_uuid, image FROM `isu`")
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	for _, isu := range isus {
-		if len(isu.Image) > 0 {
-			err = os.WriteFile(getIconPath(isu.JIAIsuUUID), isu.Image, 0644)
-			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-		}
-	}
-
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
 	})
@@ -626,10 +592,6 @@ func getIsuList(c echo.Context) error {
 	return c.JSON(http.StatusOK, responseList)
 }
 
-func getIconPath(jiaIsuUUID string) string {
-	return frontendContentsPath + "/icon/" + jiaIsuUUID + ".jpg"
-}
-
 // POST /api/isu
 // ISUを登録
 func postIsu(c echo.Context) error {
@@ -655,35 +617,23 @@ func postIsu(c echo.Context) error {
 		useDefaultImage = true
 	}
 
-	file, err := os.Create(getIconPath(jiaIsuUUID))
-	if err != nil {
-		c.Logger().Error(err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer file.Close()
+	var image []byte
 
 	if useDefaultImage {
-		defaultIconFile, err := os.Open(defaultIconFilePath)
-		if err != nil {
-			c.Logger().Error(err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
-		defer defaultIconFile.Close()
-
-		_, err = io.Copy(file, defaultIconFile)
+		image, err = ioutil.ReadFile(defaultIconFilePath)
 		if err != nil {
 			c.Logger().Error(err)
 			return c.NoContent(http.StatusInternalServerError)
 		}
 	} else {
-		src, err := fh.Open()
+		file, err := fh.Open()
 		if err != nil {
 			c.Logger().Error(err)
 			return c.NoContent(http.StatusInternalServerError)
 		}
-		defer src.Close()
+		defer file.Close()
 
-		_, err = io.Copy(file, src)
+		image, err = ioutil.ReadAll(file)
 		if err != nil {
 			c.Logger().Error(err)
 			return c.NoContent(http.StatusInternalServerError)
@@ -698,8 +648,8 @@ func postIsu(c echo.Context) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec("INSERT INTO `isu`"+
-		"	(`jia_isu_uuid`, `name`, `jia_user_id`) VALUES (?, ?, ?)",
-		jiaIsuUUID, isuName, jiaUserID)
+		"	(`jia_isu_uuid`, `name`, `image`, `jia_user_id`) VALUES (?, ?, ?, ?)",
+		jiaIsuUUID, isuName, image, jiaUserID)
 	if err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 
@@ -862,16 +812,15 @@ func getIsuIcon(c echo.Context) error {
 		return c.Blob(http.StatusOK, "", icon)
 	}
 
-	file, err := os.Open(getIconPath(jiaIsuUUID))
+	var image []byte
+	err = s2Db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+		jiaUserID, jiaIsuUUID)
 	if err != nil {
-		c.Logger().Error(err)
-		return c.String(http.StatusNotFound, "not found: isu")
-	}
-	defer file.Close()
+		if errors.Is(err, sql.ErrNoRows) {
+			return c.String(http.StatusNotFound, "not found: isu")
+		}
 
-	image, err := io.ReadAll(file)
-	if err != nil {
-		c.Logger().Error(err)
+		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
