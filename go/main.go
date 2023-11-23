@@ -83,13 +83,17 @@ type GetIsuListResponse struct {
 }
 
 type IsuCondition struct {
-	ID         int       `db:"id"`
-	JIAIsuUUID string    `db:"jia_isu_uuid"`
-	Timestamp  time.Time `db:"timestamp"`
-	IsSitting  bool      `db:"is_sitting"`
-	Condition  string    `db:"condition"`
-	Message    string    `db:"message"`
-	CreatedAt  time.Time `db:"created_at"`
+	ID           int       `db:"id"`
+	JIAIsuUUID   string    `db:"jia_isu_uuid"`
+	Timestamp    time.Time `db:"timestamp"`
+	IsSitting    bool      `db:"is_sitting"`
+	Condition    string    `db:"condition"`
+	IsDirty      bool      `db:"is_dirty"`
+	IsOverweight bool      `db:"is_overweight"`
+	IsBroken     bool      `db:"is_broken"`
+	WarnScore    int       `db:"warn_score"`
+	Message      string    `db:"message"`
+	CreatedAt    time.Time `db:"created_at"`
 }
 
 type MySQLConnectionEnv struct {
@@ -1019,7 +1023,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 		err = db.Select(&conditions,
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
-				"   AND (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', '')) / LENGTH('=true')) IN (0, 1, 2, 3)"+
+				"   AND `warn_score` <= 3"+
 				"	ORDER BY `timestamp` DESC LIMIT ?",
 			jiaIsuUUID, endTime, limit,
 		)
@@ -1028,7 +1032,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
 				"	AND ? <= `timestamp`"+
-				"   AND (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', '')) / LENGTH('=true')) IN (0, 1, 2, 3)"+
+				"   AND `warn_score` <= 3"+
 				"	ORDER BY `timestamp` DESC LIMIT ?",
 			jiaIsuUUID, endTime, startTime, limit,
 		)
