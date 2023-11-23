@@ -1209,7 +1209,7 @@ func trendUpdaterWorker() {
 	for {
 		select {
 		case <-ticker.C:
-			go updateTrend()
+			updateTrend()
 		}
 	}
 }
