@@ -1,0 +1,13 @@
+matching_groups:
+  - /hoge
+sort: avg
+reverse: true
+metrics:
+  - count
+  - method
+  - uri
+  - min
+  - avg
+  - max
+  - sum
+file: /var/log/nginx/access.ndjson
