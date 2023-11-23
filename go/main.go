@@ -1153,12 +1153,8 @@ var (
 )
 
 func trendUpdaterWorker() {
-	ticker := time.NewTicker(time.Millisecond * 500)
 	for {
-		select {
-		case <-ticker.C:
-			go updateTrend()
-		}
+		updateTrend()
 	}
 }
 
