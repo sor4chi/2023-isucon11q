@@ -246,7 +246,6 @@ func main() {
 	e.GET("/isu/:jia_isu_uuid/condition", getIndex)
 	e.GET("/isu/:jia_isu_uuid/graph", getIndex)
 	e.GET("/register", getIndex)
-	e.Static("/assets", frontendContentsPath+"/assets")
 
 	mySQLConnectionData = NewMySQLConnectionEnv()
 
@@ -1125,7 +1124,7 @@ var (
 )
 
 func trendUpdaterWorker() {
-	ticker := time.NewTicker(time.Millisecond * 300)
+	ticker := time.NewTicker(time.Millisecond * 1000)
 	for {
 		select {
 		case <-ticker.C:
@@ -1318,6 +1317,18 @@ func isValidConditionFormat(conditionStr string) bool {
 	return (idxCondStr == len(conditionStr))
 }
 
+var html = []byte{}
+
 func getIndex(c echo.Context) error {
-	return c.File(frontendContentsPath + "/index.html")
+	if len(html) == 0 {
+		var err error
+		html, err = os.ReadFile(frontendContentsPath + "/index.html")
+		if err != nil {
+			c.Logger().Error(err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+	}
+
+	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
+	return c.HTMLBlob(http.StatusOK, html)
 }
