@@ -577,6 +577,8 @@ func getIsuList(c echo.Context) error {
 				ConditionLevel: conditionLevel,
 				Message:        lastCondition.Message,
 			}
+
+			latestIsuConditionCache.Add(isu.JIAIsuUUID, lastCondition)
 		}
 
 		res := GetIsuListResponse{
@@ -586,7 +588,6 @@ func getIsuList(c echo.Context) error {
 			Character:          isu.Character,
 			LatestIsuCondition: formattedCondition}
 		responseList = append(responseList, res)
-		latestIsuConditionCache.Add(isu.JIAIsuUUID, lastCondition)
 	}
 
 	return c.JSON(http.StatusOK, responseList)
