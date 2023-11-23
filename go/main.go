@@ -1153,11 +1153,11 @@ var (
 )
 
 func trendUpdaterWorker() {
-	ticker := time.NewTicker(time.Millisecond * 1000)
+	ticker := time.NewTicker(time.Millisecond * 500)
 	for {
 		select {
 		case <-ticker.C:
-			updateTrend()
+			go updateTrend()
 		}
 	}
 }
@@ -1308,7 +1308,7 @@ var postIsuConditionInsertChan = make(chan PostIsuConditionBulkInsert)
 
 func postIsuConditionInsertWorker() {
 	reqs := []PostIsuConditionBulkInsert{}
-	ticker := time.NewTicker(time.Millisecond * 500)
+	ticker := time.NewTicker(time.Millisecond * 300)
 	for {
 		select {
 		case req := <-postIsuConditionInsertChan:
