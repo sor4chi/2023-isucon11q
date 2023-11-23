@@ -20,3 +20,5 @@ ALTER TABLE `isu_condition` ADD INDEX `isu_condition_jia_isu_uuid_idx` (
     `condition_level`,
     `timestamp` DESC
 );
+
+ALTER TABLE `isu` ADD INDEX `isu_jia_user_id_idx` (`jia_user_id`);
