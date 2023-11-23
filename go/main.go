@@ -211,6 +211,7 @@ func init() {
 }
 
 func main() {
+	iconCache = map[string][]byte{}
 	runtime.SetBlockProfileRate(1)
 	runtime.SetMutexProfileFraction(1)
 	go func() {
@@ -317,6 +318,7 @@ func getJIAServiceURL(tx *sqlx.Tx) string {
 // POST /initialize
 // サービスを初期化
 func postInitialize(c echo.Context) error {
+	iconCache = map[string][]byte{}
 	var request InitializeRequest
 	err := c.Bind(&request)
 	if err != nil {
@@ -696,6 +698,13 @@ func getIsuID(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+var iconCache = map[string][]byte{}
+var iconCacheRWMutex = sync.RWMutex{}
+
+func iconCacheKey(jiaUserID string, jiaIsuUUID string) string {
+	return jiaUserID + ":" + jiaIsuUUID
+}
+
 // GET /api/isu/:jia_isu_uuid/icon
 // ISUのアイコンを取得
 func getIsuIcon(c echo.Context) error {
@@ -710,6 +719,13 @@ func getIsuIcon(c echo.Context) error {
 	}
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
+	key := iconCacheKey(jiaUserID, jiaIsuUUID)
+	iconCacheRWMutex.RLock()
+	icon, ok := iconCache[key]
+	iconCacheRWMutex.RUnlock()
+	if ok {
+		return c.Blob(http.StatusOK, "", icon)
+	}
 
 	var image []byte
 	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
@@ -722,6 +738,12 @@ func getIsuIcon(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+
+	iconCacheRWMutex.Lock()
+	iconCache[key] = image
+	iconCacheRWMutex.Unlock()
+
+	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
 
 	return c.Blob(http.StatusOK, "", image)
 }
