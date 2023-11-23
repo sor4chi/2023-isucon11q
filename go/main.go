@@ -1351,6 +1351,7 @@ func updateTrend() {
 				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
 			}
 
+			latestIsuConditionCache.Add(isu.JIAIsuUUID, isuLastCondition)
 		}
 
 		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
