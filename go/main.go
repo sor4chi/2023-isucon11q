@@ -253,6 +253,7 @@ func main() {
 	iconCache.Flush()
 	userCache.Flush()
 	isuGraphResponseCache.Flush()
+	isuLastConditionCache.Flush()
 	latestIsuConditionCache.Flush()
 
 	runtime.SetBlockProfileRate(1)
@@ -1265,36 +1266,40 @@ func trendUpdaterWorker() {
 	}
 }
 
-type LatestIsuConditionCache struct {
+type IsuConditionCache struct {
 	RWMutex sync.RWMutex
 	// key: jia_isu_uuid value: condition
 	Data map[string]IsuCondition
 }
 
-var latestIsuConditionCache = LatestIsuConditionCache{
+var latestIsuConditionCache = IsuConditionCache{
 	Data: map[string]IsuCondition{},
 }
 
-func (licc *LatestIsuConditionCache) Add(jiaIsuUUID string, condition IsuCondition) {
+var isuLastConditionCache = IsuConditionCache{
+	Data: map[string]IsuCondition{},
+}
+
+func (licc *IsuConditionCache) Add(jiaIsuUUID string, condition IsuCondition) {
 	licc.RWMutex.Lock()
 	licc.Data[jiaIsuUUID] = condition
 	licc.RWMutex.Unlock()
 }
 
-func (licc *LatestIsuConditionCache) Get(jiaIsuUUID string) (IsuCondition, bool) {
+func (licc *IsuConditionCache) Get(jiaIsuUUID string) (IsuCondition, bool) {
 	licc.RWMutex.RLock()
 	condition, ok := licc.Data[jiaIsuUUID]
 	licc.RWMutex.RUnlock()
 	return condition, ok
 }
 
-func (licc *LatestIsuConditionCache) Flush() {
+func (licc *IsuConditionCache) Flush() {
 	licc.RWMutex.Lock()
 	licc.Data = map[string]IsuCondition{}
 	licc.RWMutex.Unlock()
 }
 
-func (licc *LatestIsuConditionCache) Delete(jiaIsuUUID string) {
+func (licc *IsuConditionCache) Delete(jiaIsuUUID string) {
 	licc.RWMutex.Lock()
 	delete(licc.Data, jiaIsuUUID)
 	licc.RWMutex.Unlock()
@@ -1320,7 +1325,7 @@ func updateTrend() {
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
 			isuLastCondition := IsuCondition{}
-			if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
+			if v, ok := isuLastConditionCache.Get(isu.JIAIsuUUID); ok {
 				isuLastCondition = v
 			} else {
 				err = getDBFromJiaIsuUUID(isu.JIAIsuUUID).Get(&isuLastCondition,
@@ -1352,7 +1357,7 @@ func updateTrend() {
 				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
 			}
 
-			latestIsuConditionCache.Add(isu.JIAIsuUUID, isuLastCondition)
+			isuLastConditionCache.Add(isu.JIAIsuUUID, isuLastCondition)
 		}
 
 		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
@@ -1492,6 +1497,7 @@ func postIsuConditionInsertWorker() {
 						log.Errorf("db error: %v", err)
 					}
 					for _, req := range copyReqs {
+						isuLastConditionCache.Delete(req.JiaIsuUUID)
 						latestIsuConditionCache.Delete(req.JiaIsuUUID)
 						isuGraphResponseCache.Delete(req.JiaIsuUUID)
 					}
@@ -1507,6 +1513,7 @@ func postIsuConditionInsertWorker() {
 						log.Errorf("db error: %v", err)
 					}
 					for _, req := range copyReqs {
+						isuLastConditionCache.Delete(req.JiaIsuUUID)
 						latestIsuConditionCache.Delete(req.JiaIsuUUID)
 						isuGraphResponseCache.Delete(req.JiaIsuUUID)
 					}
