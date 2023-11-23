@@ -26,6 +26,7 @@ CREATE TABLE `isu_condition` (
   PRIMARY KEY(`id`)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4;
 
+CREATE INDEX `isu_condition_jia_isu_uuid` ON `isu_condition`(`jia_isu_uuid`, `timestamp` DESC);
 CREATE TABLE `user` (
   `jia_user_id` VARCHAR(255) PRIMARY KEY,
   `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)
