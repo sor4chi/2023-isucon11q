@@ -1316,11 +1316,12 @@ func getTrend(c echo.Context) error {
 }
 
 type PostIsuConditionBulkInsert struct {
-	JiaIsuUUID string    `db:"jia_isu_uuid"`
-	Timestamp  time.Time `db:"timestamp"`
-	IsSitting  bool      `db:"is_sitting"`
-	Condition  string    `db:"condition"`
-	Message    string    `db:"message"`
+	JiaIsuUUID     string    `db:"jia_isu_uuid"`
+	Timestamp      time.Time `db:"timestamp"`
+	IsSitting      bool      `db:"is_sitting"`
+	Condition      string    `db:"condition"`
+	ConditionLevel string    `db:"condition_level"`
+	Message        string    `db:"message"`
 }
 
 // POST /api/condition/:jia_isu_uuid
@@ -1363,12 +1364,18 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
+		conditionLevel, err := calculateConditionLevel(cond.Condition)
+		if err != nil {
+			return c.String(http.StatusBadRequest, "bad request body")
+		}
+
 		postIsuConditionInsertChan <- PostIsuConditionBulkInsert{
-			JiaIsuUUID: jiaIsuUUID,
-			Timestamp:  timestamp,
-			IsSitting:  cond.IsSitting,
-			Condition:  cond.Condition,
-			Message:    cond.Message,
+			JiaIsuUUID:     jiaIsuUUID,
+			Timestamp:      timestamp,
+			IsSitting:      cond.IsSitting,
+			Condition:      cond.Condition,
+			ConditionLevel: conditionLevel,
+			Message:        cond.Message,
 		}
 	}
 
@@ -1392,8 +1399,8 @@ func postIsuConditionInsertWorker() {
 			go func() {
 				_, err := isuConditionDb.NamedExec(
 					"INSERT INTO `isu_condition`"+
-						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`)"+
+						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message",
 					copyReqs)
 				if err != nil {
 					log.Errorf("db error: %v", err)
