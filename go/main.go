@@ -46,10 +46,9 @@ const (
 )
 
 var (
-	isuDb               *sqlx.DB
-	isuConditionDb      *sqlx.DB
-	sessionStore        sessions.Store
-	mySQLConnectionData *MySQLConnectionEnv
+	isuDb          *sqlx.DB
+	isuConditionDb *sqlx.DB
+	sessionStore   sessions.Store
 
 	jiaJWTSigningKey *ecdsa.PublicKey
 
@@ -254,6 +253,7 @@ func main() {
 	iconCache.Flush()
 	userCache.Flush()
 	isuGraphResponseCache.Flush()
+	latestIsuConditionCache.Flush()
 
 	runtime.SetBlockProfileRate(1)
 	runtime.SetMutexProfileFraction(1)
@@ -354,6 +354,7 @@ func postInitialize(c echo.Context) error {
 	iconCache.Flush()
 	userCache.Flush()
 	isuGraphResponseCache.Flush()
+	latestIsuConditionCache.Flush()
 
 	var request InitializeRequest
 	err := c.Bind(&request)
@@ -517,14 +518,18 @@ func getIsuList(c echo.Context) error {
 	for _, isu := range isuList {
 		var lastCondition IsuCondition
 		foundLastCondition := true
-		err = isuConditionDb.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
-			isu.JIAIsuUUID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				foundLastCondition = false
-			} else {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
+		if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
+			lastCondition = v
+		} else {
+			err = isuConditionDb.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
+				isu.JIAIsuUUID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					foundLastCondition = false
+				} else {
+					c.Logger().Errorf("db error: %v", err)
+					return c.NoContent(http.StatusInternalServerError)
+				}
 			}
 		}
 
@@ -1233,6 +1238,41 @@ func trendUpdaterWorker() {
 	}
 }
 
+type LatestIsuConditionCache struct {
+	RWMutex sync.RWMutex
+	// key: jia_isu_uuid value: condition
+	Data map[string]IsuCondition
+}
+
+var latestIsuConditionCache = LatestIsuConditionCache{
+	Data: map[string]IsuCondition{},
+}
+
+func (licc *LatestIsuConditionCache) Add(jiaIsuUUID string, condition IsuCondition) {
+	licc.RWMutex.Lock()
+	licc.Data[jiaIsuUUID] = condition
+	licc.RWMutex.Unlock()
+}
+
+func (licc *LatestIsuConditionCache) Get(jiaIsuUUID string) (IsuCondition, bool) {
+	licc.RWMutex.RLock()
+	condition, ok := licc.Data[jiaIsuUUID]
+	licc.RWMutex.RUnlock()
+	return condition, ok
+}
+
+func (licc *LatestIsuConditionCache) Flush() {
+	licc.RWMutex.Lock()
+	licc.Data = map[string]IsuCondition{}
+	licc.RWMutex.Unlock()
+}
+
+func (licc *LatestIsuConditionCache) Delete(jiaIsuUUID string) {
+	licc.RWMutex.Lock()
+	delete(licc.Data, jiaIsuUUID)
+	licc.RWMutex.Unlock()
+}
+
 func updateTrend() {
 	isuList := []IsuListItem{}
 	err := isuDb.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
@@ -1253,15 +1293,19 @@ func updateTrend() {
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
 			isuLastCondition := IsuCondition{}
-			err = isuConditionDb.Get(&isuLastCondition,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-				isu.JIAIsuUUID,
-			)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				log.Errorf("db error: %v", err)
+			if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
+				isuLastCondition = v
+			} else {
+				err = isuConditionDb.Get(&isuLastCondition,
+					"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
+					isu.JIAIsuUUID,
+				)
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				if err != nil {
+					log.Errorf("db error: %v", err)
+				}
 			}
 
 			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
@@ -1406,6 +1450,7 @@ func postIsuConditionInsertWorker() {
 					log.Errorf("db error: %v", err)
 				}
 				for _, req := range copyReqs {
+					latestIsuConditionCache.Delete(req.JiaIsuUUID)
 					isuGraphResponseCache.Delete(req.JiaIsuUUID)
 				}
 			}()
