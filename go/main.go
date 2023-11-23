@@ -1308,29 +1308,19 @@ func updateTrend() {
 	isuListS3 := []IsuListItem{}
 	query := `
 		SELECT
-			isu.id AS id,
-			isu.character AS isu_character,
-			isu.jia_isu_uuid AS jia_isu_uuid,
-			latest_isu_condition.condition_level AS condition_level,
-			latest_isu_condition.timestamp AS timestamp
-		FROM isu
-		INNER JOIN (
-			SELECT
-				jia_isu_uuid,
-				condition_level,
-				timestamp
-			FROM isu_condition
+			i.id AS id,
+			i.character AS isu_character,
+			c2.condition_level AS condition_level,
+			c2.timestamp AS timestamp
+		FROM isu AS i
+		LEFT JOIN (
+			SELECT c.jia_isu_uuid, c.condition, c.timestamp, c.condition_level
+			FROM isu_condition AS c
 			INNER JOIN (
-				SELECT
-					jia_isu_uuid AS tmp_jia_isu_uuid,
-					MAX(timestamp) AS tmp_timestamp
-				FROM isu_condition
-				GROUP BY jia_isu_uuid
-			) AS grouped_isu_condition
-			ON isu_condition.jia_isu_uuid = grouped_isu_condition.tmp_jia_isu_uuid
-			AND isu_condition.timestamp = grouped_isu_condition.tmp_timestamp
-		) AS latest_isu_condition
-		ON isu.jia_isu_uuid = latest_isu_condition.jia_isu_uuid
+				SELECT jia_isu_uuid, MAX(timestamp) AS latestTimestamp FROM isu_condition GROUP BY jia_isu_uuid
+			) AS t on c.jia_isu_uuid = t.jia_isu_uuid and c.timestamp = t.latestTimestamp
+		) AS c2 on i.jia_isu_uuid = c2.jia_isu_uuid
+		ORDER BY c2.timestamp DESC
 	`
 	wg := sync.WaitGroup{}
 	wg.Add(2)
