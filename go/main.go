@@ -1375,7 +1375,9 @@ func postIsuConditionInsertWorker() {
 				if err != nil {
 					log.Errorf("db error: %v", err)
 				}
-				isuGraphResponseCache.Flush()
+				for _, req := range copyReqs {
+					isuGraphResponseCache.Delete(req.JiaIsuUUID)
+				}
 			}()
 			reqs = []PostIsuConditionBulkInsert{}
 		}
