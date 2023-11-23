@@ -83,17 +83,14 @@ type GetIsuListResponse struct {
 }
 
 type IsuCondition struct {
-	ID           int       `db:"id"`
-	JIAIsuUUID   string    `db:"jia_isu_uuid"`
-	Timestamp    time.Time `db:"timestamp"`
-	IsSitting    bool      `db:"is_sitting"`
-	Condition    string    `db:"condition"`
-	IsDirty      bool      `db:"is_dirty"`
-	IsOverweight bool      `db:"is_overweight"`
-	IsBroken     bool      `db:"is_broken"`
-	WarnScore    int       `db:"warn_score"`
-	Message      string    `db:"message"`
-	CreatedAt    time.Time `db:"created_at"`
+	ID             int       `db:"id"`
+	JIAIsuUUID     string    `db:"jia_isu_uuid"`
+	Timestamp      time.Time `db:"timestamp"`
+	IsSitting      bool      `db:"is_sitting"`
+	Condition      string    `db:"condition"`
+	ConditionLevel string    `db:"condition_level"`
+	Message        string    `db:"message"`
+	CreatedAt      time.Time `db:"created_at"`
 }
 
 type MySQLConnectionEnv struct {
@@ -1019,11 +1016,17 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	conditions := []IsuCondition{}
 	var err error
 
+	conditionLevelQuery := "AND `condition_level` IN ("
+	for level := range conditionLevel {
+		conditionLevelQuery += "'" + level + "',"
+	}
+	conditionLevelQuery = strings.TrimSuffix(conditionLevelQuery, ",") + ")"
+
 	if startTime.IsZero() {
 		err = db.Select(&conditions,
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
-				"   AND `warn_score` <= 3"+
+				"	"+conditionLevelQuery+
 				"	ORDER BY `timestamp` DESC LIMIT ?",
 			jiaIsuUUID, endTime, limit,
 		)
@@ -1032,7 +1035,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
 				"	AND ? <= `timestamp`"+
-				"   AND `warn_score` <= 3"+
+				"	"+conditionLevelQuery+
 				"	ORDER BY `timestamp` DESC LIMIT ?",
 			jiaIsuUUID, endTime, startTime, limit,
 		)

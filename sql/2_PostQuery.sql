@@ -1,5 +1,22 @@
-ALTER TABLE `isu_condition` ADD COLUMN `is_dirty` TINYINT(1) AS (CASE WHEN `condition` LIKE '%is_dirty=true%' THEN 1 ELSE 0 END) STORED;
-ALTER TABLE `isu_condition` ADD COLUMN `is_overweight` TINYINT(1) AS (CASE WHEN `condition` LIKE '%is_overweight=true%' THEN 1 ELSE 0 END) STORED;
-ALTER TABLE `isu_condition` ADD COLUMN `is_broken` TINYINT(1) AS (CASE WHEN `condition` LIKE '%is_broken=true%' THEN 1 ELSE 0 END) STORED;
-ALTER TABLE `isu_condition` ADD COLUMN `warn_score` INT AS (`is_dirty` + `is_overweight` + `is_broken`) STORED;
-CREATE INDEX `isu_condition_jia_isu_uuid` ON `isu_condition`(`jia_isu_uuid`, `warn_score`, `timestamp` DESC);
+ALTER TABLE `isu_condition`
+ADD COLUMN `condition_level` ENUM ('info', 'warning', 'critical') AS (
+    CASE
+        WHEN (
+            (
+                LENGTH (`condition`) - LENGTH (REPLACE (`condition`, '=true', ''))
+            ) / LENGTH ('=true')
+        ) >= 3 THEN 'critical'
+        WHEN (
+            (
+                LENGTH (`condition`) - LENGTH (REPLACE (`condition`, '=true', ''))
+            ) / LENGTH ('=true')
+        ) >= 1 THEN 'warning'
+        ELSE 'info'
+    END
+) STORED;
+
+ALTER TABLE `isu_condition` ADD INDEX `isu_condition_jia_isu_uuid_idx` (
+    `jia_isu_uuid`,
+    `condition_level`,
+    `timestamp` DESC
+);
