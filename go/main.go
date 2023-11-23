@@ -1246,9 +1246,11 @@ func calculateConditionLevel(condition string) (string, error) {
 }
 
 type IsuListItem struct {
-	ID         int    `db:"id" json:"id"`
-	JIAIsuUUID string `db:"jia_isu_uuid" json:"jia_isu_uuid"`
-	Character  string `db:"character" json:"character"`
+	ID             int       `db:"id" json:"id"`
+	JIAIsuUUID     string    `db:"jia_isu_uuid" json:"jia_isu_uuid"`
+	IsuCharacter   string    `db:"isu_character" json:"isu_character"`
+	ConditionLevel string    `db:"condition_level" json:"condition_level"`
+	Timestamp      time.Time `db:"timestamp" json:"timestamp"`
 }
 
 var (
@@ -1302,17 +1304,72 @@ func (licc *IsuConditionCache) Delete(jiaIsuUUID string) {
 }
 
 func updateTrend() {
+	isuListS2 := []IsuListItem{}
+	isuListS3 := []IsuListItem{}
+	query := `
+		SELECT
+			isu.id AS id,
+			isu.character AS isu_character,
+			isu.jia_isu_uuid AS jia_isu_uuid,
+			latest_isu_condition.condition_level AS condition_level,
+			latest_isu_condition.timestamp AS timestamp
+		FROM isu
+		INNER JOIN (
+			SELECT
+				jia_isu_uuid,
+				condition_level,
+				timestamp
+			FROM isu_condition
+			INNER JOIN (
+				SELECT
+					jia_isu_uuid AS tmp_jia_isu_uuid,
+					MAX(timestamp) AS tmp_timestamp
+				FROM isu_condition
+				GROUP BY jia_isu_uuid
+			) AS grouped_isu_condition
+			ON isu_condition.jia_isu_uuid = grouped_isu_condition.tmp_jia_isu_uuid
+			AND isu_condition.timestamp = grouped_isu_condition.tmp_timestamp
+		) AS latest_isu_condition
+		ON isu.jia_isu_uuid = latest_isu_condition.jia_isu_uuid
+	`
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		err := s2Db.Select(&isuListS2, query)
+		if err != nil {
+			log.Errorf("db error: %v", err)
+			return
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		err := s3Db.Select(&isuListS3, query)
+		if err != nil {
+			log.Errorf("db error: %v", err)
+			return
+		}
+	}()
+
+	wg.Wait()
+
+	isuListDistinct := map[string]IsuListItem{}
+	for _, isu := range isuListS2 {
+		isuListDistinct[isu.JIAIsuUUID] = isu
+	}
+	for _, isu := range isuListS3 {
+		isuListDistinct[isu.JIAIsuUUID] = isu
+	}
+
 	isuList := []IsuListItem{}
-	err := s2Db.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
-	if err != nil {
-		log.Errorf("db error: %v", err)
-		return
+	for _, isu := range isuListDistinct {
+		isuList = append(isuList, isu)
 	}
 
 	res := []TrendResponse{}
 	groupedIsuList := map[string][]IsuListItem{}
 	for _, isu := range isuList {
-		groupedIsuList[isu.Character] = append(groupedIsuList[isu.Character], isu)
+		groupedIsuList[isu.IsuCharacter] = append(groupedIsuList[isu.IsuCharacter], isu)
 	}
 
 	for character, isuList := range groupedIsuList {
@@ -1320,31 +1377,11 @@ func updateTrend() {
 		characterWarningIsuConditions := []*TrendCondition{}
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
-			isuLastCondition := IsuCondition{}
-			if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
-				isuLastCondition = v
-			} else {
-				err = getDBFromJiaIsuUUID(isu.JIAIsuUUID).Get(&isuLastCondition,
-					"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-					isu.JIAIsuUUID,
-				)
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				if err != nil {
-					log.Errorf("db error: %v", err)
-				}
-			}
-
-			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-			if err != nil {
-				log.Error(err)
-			}
 			trendCondition := TrendCondition{
 				ID:        isu.ID,
-				Timestamp: isuLastCondition.Timestamp.Unix(),
+				Timestamp: isu.Timestamp.Unix(),
 			}
-			switch conditionLevel {
+			switch isu.ConditionLevel {
 			case "info":
 				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
 			case "warning":
@@ -1352,8 +1389,6 @@ func updateTrend() {
 			case "critical":
 				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
 			}
-
-			latestIsuConditionCache.Add(isu.JIAIsuUUID, isuLastCondition)
 		}
 
 		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
