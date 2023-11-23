@@ -1,5 +1,12 @@
 matching_groups:
-  - /hoge
+  - /api/isu/[^\/]+/icon
+  - /api/isu/[^\/]+/graph
+  - /api/isu/[^\/]+
+  - /api/condition/[^\/]
+  - /isu/[^\/]+/condition
+  - /isu/[^\/]+/graph
+  - /isu/[^\/]+
+  - /assets/.*
 sort: avg
 reverse: true
 metrics:
