@@ -794,13 +794,14 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 		WHERE jia_isu_uuid = ?
 		AND timestamp >= ?
 		AND timestamp < ?
-		ORDER BY timestamp ASC
+		ORDER BY timestamp DESC
 	`, jiaIsuUUID, graphDate, graphDate.Add(time.Hour*24))
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
 
-	for _, condition := range conditions {
+	for i := len(conditions) - 1; i >= 0; i-- {
+		condition := conditions[i]
 		truncatedConditionTime := condition.Timestamp.Truncate(time.Hour)
 		if truncatedConditionTime != startTimeInThisHour {
 			if len(conditionsInThisHour) > 0 {
