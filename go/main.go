@@ -1088,16 +1088,43 @@ func calculateConditionLevel(condition string) (string, error) {
 }
 
 type IsuListItem struct {
-	ID         int    `db:"id" json:"id"`
-	JIAIsuUUID string `db:"jia_isu_uuid" json:"jia_isu_uuid"`
-	Character  string `db:"character" json:"character"`
+	ID             int       `db:"id" json:"id"`
+	JIAIsuUUID     string    `db:"jia_isu_uuid" json:"jia_isu_uuid"`
+	IsuCharacter   string    `db:"isu_character" json:"isu_character"`
+	ConditionLevel string    `db:"condition_level" json:"condition_level"`
+	Timestamp      time.Time `db:"timestamp" json:"timestamp"`
 }
 
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
 	isuList := []IsuListItem{}
-	err := db.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
+	err := db.Select(&isuList, `
+		SELECT
+			isu.id AS id,
+			isu.character AS isu_character,
+			isu.jia_isu_uuid AS jia_isu_uuid,
+			latest_isu_condition.condition_level AS condition_level,
+			latest_isu_condition.timestamp AS timestamp
+		FROM isu
+		INNER JOIN (
+			SELECT
+				jia_isu_uuid,
+				condition_level,
+				timestamp
+			FROM isu_condition
+			INNER JOIN (
+				SELECT
+					jia_isu_uuid AS tmp_jia_isu_uuid,
+					MAX(timestamp) AS tmp_timestamp
+				FROM isu_condition
+				GROUP BY jia_isu_uuid
+			) AS grouped_isu_condition
+			ON isu_condition.jia_isu_uuid = grouped_isu_condition.tmp_jia_isu_uuid
+			AND isu_condition.timestamp = grouped_isu_condition.tmp_timestamp
+		) AS latest_isu_condition
+		ON isu.jia_isu_uuid = latest_isu_condition.jia_isu_uuid
+	`)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1106,7 +1133,7 @@ func getTrend(c echo.Context) error {
 	res := []TrendResponse{}
 	groupedIsuList := map[string][]IsuListItem{}
 	for _, isu := range isuList {
-		groupedIsuList[isu.Character] = append(groupedIsuList[isu.Character], isu)
+		groupedIsuList[isu.IsuCharacter] = append(groupedIsuList[isu.IsuCharacter], isu)
 	}
 
 	for character, isuList := range groupedIsuList {
@@ -1114,29 +1141,11 @@ func getTrend(c echo.Context) error {
 		characterWarningIsuConditions := []*TrendCondition{}
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
-			isuLastCondition := IsuCondition{}
-			err = db.Get(&isuLastCondition,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-				isu.JIAIsuUUID,
-			)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-
-			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
 			trendCondition := TrendCondition{
 				ID:        isu.ID,
-				Timestamp: isuLastCondition.Timestamp.Unix(),
+				Timestamp: isu.Timestamp.Unix(),
 			}
-			switch conditionLevel {
+			switch isu.ConditionLevel {
 			case "info":
 				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
 			case "warning":
