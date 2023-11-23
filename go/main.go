@@ -220,7 +220,6 @@ func main() {
 	e.Debug = false
 	e.Logger.SetLevel(log.ERROR)
 
-	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
 	e.POST("/initialize", postInitialize)
