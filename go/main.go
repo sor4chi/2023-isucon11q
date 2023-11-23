@@ -46,7 +46,8 @@ const (
 )
 
 var (
-	db                  *sqlx.DB
+	isuDb               *sqlx.DB
+	isuConditionDb      *sqlx.DB
 	sessionStore        sessions.Store
 	mySQLConnectionData *MySQLConnectionEnv
 
@@ -182,9 +183,19 @@ func getEnv(key string, defaultValue string) string {
 	return defaultValue
 }
 
-func NewMySQLConnectionEnv() *MySQLConnectionEnv {
+func IsuNewMySQLConnectionEnv() *MySQLConnectionEnv {
 	return &MySQLConnectionEnv{
-		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
+		Host:     "192.168.0.12",
+		Port:     getEnv("MYSQL_PORT", "3306"),
+		User:     getEnv("MYSQL_USER", "isucon"),
+		DBName:   getEnv("MYSQL_DBNAME", "isucondition"),
+		Password: getEnv("MYSQL_PASS", "isucon"),
+	}
+}
+
+func IsuConditionNewMySQLConnectionEnv() *MySQLConnectionEnv {
+	return &MySQLConnectionEnv{
+		Host:     "192.168.0.13",
 		Port:     getEnv("MYSQL_PORT", "3306"),
 		User:     getEnv("MYSQL_USER", "isucon"),
 		DBName:   getEnv("MYSQL_DBNAME", "isucondition"),
@@ -280,15 +291,23 @@ func main() {
 	e.GET("/isu/:jia_isu_uuid/graph", getIndex)
 	e.GET("/register", getIndex)
 
-	mySQLConnectionData = NewMySQLConnectionEnv()
+	isuMySQLConnectionData := IsuNewMySQLConnectionEnv()
+	isuConditionMySQLConnectionData := IsuConditionNewMySQLConnectionEnv()
 
 	var err error
-	db, err = mySQLConnectionData.ConnectDB()
+	isuDb, err = isuMySQLConnectionData.ConnectDB()
 	if err != nil {
 		e.Logger.Fatalf("failed to connect db: %v", err)
 		return
 	}
-	defer db.Close()
+	defer isuDb.Close()
+
+	isuConditionDb, err = isuConditionMySQLConnectionData.ConnectDB()
+	if err != nil {
+		e.Logger.Fatalf("failed to connect db: %v", err)
+		return
+	}
+	defer isuConditionDb.Close()
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
@@ -357,7 +376,7 @@ func postInitialize(c echo.Context) error {
 	var users []struct {
 		JIAUserID string `db:"jia_user_id"`
 	}
-	err = db.Select(&users, "SELECT jia_user_id FROM `user`")
+	err = isuDb.Select(&users, "SELECT jia_user_id FROM `user`")
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -485,7 +504,7 @@ func getIsuList(c echo.Context) error {
 	}
 
 	isuList := []Isu{}
-	err = db.Select(
+	err = isuDb.Select(
 		&isuList,
 		"SELECT * FROM `isu` WHERE `jia_user_id` = ? ORDER BY `id` DESC",
 		jiaUserID)
@@ -498,7 +517,7 @@ func getIsuList(c echo.Context) error {
 	for _, isu := range isuList {
 		var lastCondition IsuCondition
 		foundLastCondition := true
-		err = db.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
+		err = isuConditionDb.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
 			isu.JIAIsuUUID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -588,7 +607,7 @@ func postIsu(c echo.Context) error {
 		}
 	}
 
-	tx, err := db.Beginx()
+	tx, err := isuDb.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -690,7 +709,7 @@ func getIsuID(c echo.Context) error {
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
 	var res Isu
-	err = db.Get(&res, "SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+	err = isuDb.Get(&res, "SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -761,7 +780,7 @@ func getIsuIcon(c echo.Context) error {
 	}
 
 	var image []byte
-	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
+	err = isuDb.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -804,7 +823,7 @@ func getIsuGraph(c echo.Context) error {
 	date := time.Unix(datetimeInt64, 0).Truncate(time.Hour)
 
 	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ? LIMIT 1",
+	err = isuDb.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ? LIMIT 1",
 		jiaUserID, jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
@@ -814,7 +833,7 @@ func getIsuGraph(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	tx, err := db.Beginx()
+	tx, err := isuConditionDb.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1094,7 +1113,7 @@ func getIsuConditions(c echo.Context) error {
 	}
 
 	var isuName string
-	err = db.Get(&isuName,
+	err = isuDb.Get(&isuName,
 		"SELECT name FROM `isu` WHERE `jia_isu_uuid` = ? AND `jia_user_id` = ?",
 		jiaIsuUUID, jiaUserID,
 	)
@@ -1107,7 +1126,7 @@ func getIsuConditions(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	conditionsResponse, err := getIsuConditionsFromDB(db, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
+	conditionsResponse, err := getIsuConditionsFromDB(isuConditionDb, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1216,7 +1235,7 @@ func trendUpdaterWorker() {
 
 func updateTrend() {
 	isuList := []IsuListItem{}
-	err := db.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
+	err := isuDb.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
 	if err != nil {
 		log.Errorf("db error: %v", err)
 		return
@@ -1234,7 +1253,7 @@ func updateTrend() {
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
 			isuLastCondition := IsuCondition{}
-			err = db.Get(&isuLastCondition,
+			err = isuConditionDb.Get(&isuLastCondition,
 				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 				isu.JIAIsuUUID,
 			)
@@ -1328,7 +1347,7 @@ func postIsuCondition(c echo.Context) error {
 	}
 
 	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ? LIMIT 1", jiaIsuUUID)
+	err = isuDb.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ? LIMIT 1", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1371,7 +1390,7 @@ func postIsuConditionInsertWorker() {
 			}
 			copyReqs := reqs
 			go func() {
-				_, err := db.NamedExec(
+				_, err := isuConditionDb.NamedExec(
 					"INSERT INTO `isu_condition`"+
 						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
 						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
