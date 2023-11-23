@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -215,6 +216,8 @@ func main() {
 	go func() {
 		log.Fatal(http.ListenAndServe("localhost:6060", nil))
 	}()
+
+	go trendUpdaterWorker()
 
 	e := echo.New()
 	e.Debug = false
@@ -1094,14 +1097,27 @@ type IsuListItem struct {
 	Character  string `db:"character" json:"character"`
 }
 
-// GET /api/trend
-// ISUの性格毎の最新のコンディション情報
-func getTrend(c echo.Context) error {
+var (
+	trendResponseCache  []TrendResponse
+	trendResponseRWLock sync.RWMutex
+)
+
+func trendUpdaterWorker() {
+	ticker := time.NewTicker(time.Millisecond * 1000)
+	for {
+		select {
+		case <-ticker.C:
+			updateTrend()
+		}
+	}
+}
+
+func updateTrend() {
 	isuList := []IsuListItem{}
 	err := db.Select(&isuList, "SELECT `id`, `character`, `jia_isu_uuid` FROM `isu`")
 	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		log.Errorf("db error: %v", err)
+		return
 	}
 
 	res := []TrendResponse{}
@@ -1124,14 +1140,12 @@ func getTrend(c echo.Context) error {
 				continue
 			}
 			if err != nil {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
+				log.Errorf("db error: %v", err)
 			}
 
 			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
 			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
+				log.Error(err)
 			}
 			trendCondition := TrendCondition{
 				ID:        isu.ID,
@@ -1166,6 +1180,17 @@ func getTrend(c echo.Context) error {
 			})
 	}
 
+	trendResponseRWLock.Lock()
+	trendResponseCache = res
+	trendResponseRWLock.Unlock()
+}
+
+// GET /api/trend
+// ISUの性格毎の最新のコンディション情報
+func getTrend(c echo.Context) error {
+	trendResponseRWLock.RLock()
+	res := trendResponseCache
+	trendResponseRWLock.RUnlock()
 	return c.JSON(http.StatusOK, res)
 }
 
