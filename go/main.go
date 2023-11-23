@@ -210,8 +210,39 @@ func init() {
 	}
 }
 
+type UserCache struct {
+	RWMutex sync.RWMutex
+	// key: jia_user_id value: exist or not
+	Data map[string]struct{}
+}
+
+var userCache = UserCache{
+	Data: map[string]struct{}{},
+}
+
+func (uc *UserCache) Add(jiaUserID string) {
+	uc.RWMutex.Lock()
+	uc.Data[jiaUserID] = struct{}{}
+	uc.RWMutex.Unlock()
+}
+
+func (uc *UserCache) Exist(jiaUserID string) bool {
+	uc.RWMutex.RLock()
+	_, ok := uc.Data[jiaUserID]
+	uc.RWMutex.RUnlock()
+	return ok
+}
+
+func (uc *UserCache) Flush() {
+	uc.RWMutex.Lock()
+	uc.Data = map[string]struct{}{}
+	uc.RWMutex.Unlock()
+}
+
 func main() {
-	iconCache = map[string][]byte{}
+	iconCache.Flush()
+	userCache.Flush()
+
 	runtime.SetBlockProfileRate(1)
 	runtime.SetMutexProfileFraction(1)
 	go func() {
@@ -286,15 +317,8 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 	}
 
 	jiaUserID := _jiaUserID.(string)
-	var count int
 
-	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
-		jiaUserID)
-	if err != nil {
-		return "", http.StatusInternalServerError, fmt.Errorf("db error: %v", err)
-	}
-
-	if count == 0 {
+	if !userCache.Exist(jiaUserID) {
 		return "", http.StatusUnauthorized, fmt.Errorf("not found: user")
 	}
 
@@ -306,7 +330,8 @@ var jiaServiceURL = ""
 // POST /initialize
 // サービスを初期化
 func postInitialize(c echo.Context) error {
-	iconCache = map[string][]byte{}
+	iconCache.Flush()
+	userCache.Flush()
 	var request InitializeRequest
 	err := c.Bind(&request)
 	if err != nil {
@@ -323,6 +348,20 @@ func postInitialize(c echo.Context) error {
 	}
 
 	jiaServiceURL = request.JIAServiceURL
+
+	// ユーザーのキャッシュを作成
+	var users []struct {
+		JIAUserID string `db:"jia_user_id"`
+	}
+	err = db.Select(&users, "SELECT jia_user_id FROM `user`")
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	for _, user := range users {
+		userCache.Add(user.JIAUserID)
+	}
 
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
@@ -364,11 +403,7 @@ func postAuthentication(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "invalid JWT payload")
 	}
 
-	_, err = db.Exec("INSERT IGNORE INTO user (`jia_user_id`) VALUES (?)", jiaUserID)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
+	userCache.Add(jiaUserID)
 
 	session, err := getSession(c.Request())
 	if err != nil {
@@ -678,8 +713,37 @@ func getIsuID(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-var iconCache = map[string][]byte{}
-var iconCacheRWMutex = sync.RWMutex{}
+// var iconCache = map[string][]byte{}
+// var iconCacheRWMutex = sync.RWMutex{}
+
+type IconCache struct {
+	RWMutex sync.RWMutex
+	// key: jia_user_id + ":" + jia_isu_uuid value: icon
+	Data map[string][]byte
+}
+
+var iconCache = IconCache{
+	Data: map[string][]byte{},
+}
+
+func (ic *IconCache) Add(jiaUserID string, jiaIsuUUID string, icon []byte) {
+	ic.RWMutex.Lock()
+	ic.Data[iconCacheKey(jiaUserID, jiaIsuUUID)] = icon
+	ic.RWMutex.Unlock()
+}
+
+func (ic *IconCache) Get(jiaUserID string, jiaIsuUUID string) ([]byte, bool) {
+	ic.RWMutex.RLock()
+	icon, ok := ic.Data[iconCacheKey(jiaUserID, jiaIsuUUID)]
+	ic.RWMutex.RUnlock()
+	return icon, ok
+}
+
+func (ic *IconCache) Flush() {
+	ic.RWMutex.Lock()
+	ic.Data = map[string][]byte{}
+	ic.RWMutex.Unlock()
+}
 
 func iconCacheKey(jiaUserID string, jiaIsuUUID string) string {
 	return jiaUserID + ":" + jiaIsuUUID
@@ -699,10 +763,8 @@ func getIsuIcon(c echo.Context) error {
 	}
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
-	key := iconCacheKey(jiaUserID, jiaIsuUUID)
-	iconCacheRWMutex.RLock()
-	icon, ok := iconCache[key]
-	iconCacheRWMutex.RUnlock()
+
+	icon, ok := iconCache.Get(jiaUserID, jiaIsuUUID)
 	if ok {
 		return c.Blob(http.StatusOK, "", icon)
 	}
@@ -719,9 +781,7 @@ func getIsuIcon(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	iconCacheRWMutex.Lock()
-	iconCache[key] = image
-	iconCacheRWMutex.Unlock()
+	iconCache.Add(jiaUserID, jiaIsuUUID, image)
 
 	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
 
