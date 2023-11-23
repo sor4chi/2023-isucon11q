@@ -242,6 +242,7 @@ func (uc *UserCache) Flush() {
 func main() {
 	iconCache.Flush()
 	userCache.Flush()
+	isuGraphResponseCache.Flush()
 
 	runtime.SetBlockProfileRate(1)
 	runtime.SetMutexProfileFraction(1)
@@ -333,6 +334,8 @@ var jiaServiceURL = ""
 func postInitialize(c echo.Context) error {
 	iconCache.Flush()
 	userCache.Flush()
+	isuGraphResponseCache.Flush()
+
 	var request InitializeRequest
 	err := c.Bind(&request)
 	if err != nil {
@@ -833,8 +836,55 @@ func getIsuGraph(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+type IsuGraphResponseCache struct {
+	RWLock sync.RWMutex
+	// key: jia_isu_uuid + ":" + date value: response
+	Data map[string][]GraphResponse
+}
+
+var isuGraphResponseCache = IsuGraphResponseCache{
+	Data: map[string][]GraphResponse{},
+}
+
+func (igrc *IsuGraphResponseCache) Add(jiaIsuUUID string, date time.Time, response []GraphResponse) {
+	igrc.RWLock.Lock()
+	igrc.Data[isuGraphResponseCacheKey(jiaIsuUUID, date)] = response
+	igrc.RWLock.Unlock()
+}
+
+func (igrc *IsuGraphResponseCache) Get(jiaIsuUUID string, date time.Time) ([]GraphResponse, bool) {
+	igrc.RWLock.RLock()
+	response, ok := igrc.Data[isuGraphResponseCacheKey(jiaIsuUUID, date)]
+	igrc.RWLock.RUnlock()
+	return response, ok
+}
+
+func (igrc *IsuGraphResponseCache) Flush() {
+	igrc.RWLock.Lock()
+	igrc.Data = map[string][]GraphResponse{}
+	igrc.RWLock.Unlock()
+}
+
+func (igrc *IsuGraphResponseCache) Delete(jiaIsuUUID string) {
+	igrc.RWLock.Lock()
+	for k := range igrc.Data {
+		if strings.HasPrefix(k, jiaIsuUUID+":") {
+			delete(igrc.Data, k)
+		}
+	}
+	igrc.RWLock.Unlock()
+}
+
+func isuGraphResponseCacheKey(jiaIsuUUID string, date time.Time) string {
+	return jiaIsuUUID + ":" + date.Format("2006-01-02")
+}
+
 // グラフのデータ点を一日分生成
 func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Time) ([]GraphResponse, error) {
+	if v, ok := isuGraphResponseCache.Get(jiaIsuUUID, graphDate); ok {
+		return v, nil
+	}
+
 	dataPoints := []GraphDataPointWithInfo{}
 	conditionsInThisHour := []IsuCondition{}
 	timestampsInThisHour := []int64{}
@@ -937,6 +987,8 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 
 		thisTime = thisTime.Add(time.Hour)
 	}
+
+	isuGraphResponseCache.Add(jiaIsuUUID, graphDate, responseList)
 
 	return responseList, nil
 }
@@ -1323,6 +1375,7 @@ func postIsuConditionInsertWorker() {
 				if err != nil {
 					log.Errorf("db error: %v", err)
 				}
+				isuGraphResponseCache.Flush()
 			}()
 			reqs = []PostIsuConditionBulkInsert{}
 		}
