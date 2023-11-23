@@ -250,6 +250,7 @@ func main() {
 	}()
 
 	go trendUpdaterWorker()
+	go postIsuConditionInsertWorker()
 
 	e := echo.New()
 	e.Debug = false
@@ -1284,8 +1285,6 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	reqs := []PostIsuConditionBulkInsert{}
-
 	for _, cond := range req {
 		timestamp := time.Unix(cond.Timestamp, 0)
 
@@ -1293,27 +1292,45 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
-		reqs = append(reqs, PostIsuConditionBulkInsert{
+		postIsuConditionInsertChan <- PostIsuConditionBulkInsert{
 			JiaIsuUUID: jiaIsuUUID,
 			Timestamp:  timestamp,
 			IsSitting:  cond.IsSitting,
 			Condition:  cond.Condition,
 			Message:    cond.Message,
-		})
+		}
 	}
 
-	go func() {
-		_, err = db.NamedExec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
-			reqs)
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-		}
-	}()
-
 	return c.NoContent(http.StatusAccepted)
+}
+
+var postIsuConditionInsertChan = make(chan PostIsuConditionBulkInsert)
+
+func postIsuConditionInsertWorker() {
+	reqs := []PostIsuConditionBulkInsert{}
+	ticker := time.NewTicker(time.Millisecond * 500)
+	for {
+		select {
+		case req := <-postIsuConditionInsertChan:
+			reqs = append(reqs, req)
+		case <-ticker.C:
+			if len(reqs) == 0 {
+				continue
+			}
+			copyReqs := reqs
+			go func() {
+				_, err := db.NamedExec(
+					"INSERT INTO `isu_condition`"+
+						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+					copyReqs)
+				if err != nil {
+					log.Errorf("db error: %v", err)
+				}
+			}()
+			reqs = []PostIsuConditionBulkInsert{}
+		}
+	}
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
