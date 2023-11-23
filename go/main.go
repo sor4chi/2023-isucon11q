@@ -319,6 +319,32 @@ func main() {
 	e.Logger.Fatal(e.Start(serverPort))
 }
 
+type DbType string
+
+const (
+	S2 DbType = "s2"
+	S3 DbType = "s3"
+)
+
+func judgeDBFromJiaIsuUUID(jiaIsuUUID string) DbType {
+	lastChar := jiaIsuUUID[len(jiaIsuUUID)-1]
+	lastCharNum := int(lastChar - '0')
+
+	if lastCharNum%2 == 0 {
+		return S2
+	} else {
+		return S3
+	}
+}
+
+func getDBFromJiaIsuUUID(jiaIsuUUID string) *sqlx.DB {
+	if judgeDBFromJiaIsuUUID(jiaIsuUUID) == S2 {
+		return s2Db
+	} else {
+		return s3Db
+	}
+}
+
 func getSession(r *http.Request) (*sessions.Session, error) {
 	session, err := sessionStore.Get(r, sessionName)
 	if err != nil {
@@ -521,7 +547,7 @@ func getIsuList(c echo.Context) error {
 		if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
 			lastCondition = v
 		} else {
-			err = s3Db.Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
+			err = getDBFromJiaIsuUUID(isu.JIAIsuUUID).Get(&lastCondition, "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
 				isu.JIAIsuUUID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -838,7 +864,7 @@ func getIsuGraph(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	tx, err := s3Db.Beginx()
+	tx, err := getDBFromJiaIsuUUID(jiaIsuUUID).Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1131,7 +1157,7 @@ func getIsuConditions(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	conditionsResponse, err := getIsuConditionsFromDB(s3Db, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
+	conditionsResponse, err := getIsuConditionsFromDB(getDBFromJiaIsuUUID(jiaIsuUUID), jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1296,7 +1322,7 @@ func updateTrend() {
 			if v, ok := latestIsuConditionCache.Get(isu.JIAIsuUUID); ok {
 				isuLastCondition = v
 			} else {
-				err = s3Db.Get(&isuLastCondition,
+				err = getDBFromJiaIsuUUID(isu.JIAIsuUUID).Get(&isuLastCondition,
 					"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 					isu.JIAIsuUUID,
 				)
@@ -1441,18 +1467,49 @@ func postIsuConditionInsertWorker() {
 			}
 			copyReqs := reqs
 			go func() {
-				_, err := s3Db.NamedExec(
-					"INSERT INTO `isu_condition`"+
-						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`)"+
-						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message)",
-					copyReqs)
-				if err != nil {
-					log.Errorf("db error: %v", err)
-				}
+				copyResS2 := []PostIsuConditionBulkInsert{}
+				copyResS3 := []PostIsuConditionBulkInsert{}
 				for _, req := range copyReqs {
-					latestIsuConditionCache.Delete(req.JiaIsuUUID)
-					isuGraphResponseCache.Delete(req.JiaIsuUUID)
+					db := judgeDBFromJiaIsuUUID(req.JiaIsuUUID)
+					if db == S2 {
+						copyResS2 = append(copyResS2, req)
+					} else if db == S3 {
+						copyResS3 = append(copyResS3, req)
+					}
 				}
+				wg := sync.WaitGroup{}
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					_, err := s2Db.NamedExec(
+						"INSERT INTO `isu_condition`"+
+							"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`)"+
+							"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message)",
+						copyResS2)
+					if err != nil {
+						log.Errorf("db error: %v", err)
+					}
+					for _, req := range copyReqs {
+						latestIsuConditionCache.Delete(req.JiaIsuUUID)
+						isuGraphResponseCache.Delete(req.JiaIsuUUID)
+					}
+				}()
+				go func() {
+					defer wg.Done()
+					_, err := s3Db.NamedExec(
+						"INSERT INTO `isu_condition`"+
+							"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`)"+
+							"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message)",
+						copyResS3)
+					if err != nil {
+						log.Errorf("db error: %v", err)
+					}
+					for _, req := range copyReqs {
+						latestIsuConditionCache.Delete(req.JiaIsuUUID)
+						isuGraphResponseCache.Delete(req.JiaIsuUUID)
+					}
+				}()
+				wg.Wait()
 			}()
 			reqs = []PostIsuConditionBulkInsert{}
 		}
