@@ -111,8 +111,6 @@ collation-server      = utf8mb4_general_ci
 # InnoDB is enabled by default with a 10MB datafile in /var/lib/mysql/.
 # Read the manual for more InnoDB related options. There are many!
 
-innodb_redo_log_capacity = 128M
-
 #
 # * Unix socket authentication plugin is built-in since 10.0.22-6
 #
