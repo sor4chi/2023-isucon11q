@@ -216,8 +216,6 @@ func main() {
 		log.Fatal(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-	go postIsuConditionWorker()
-
 	e := echo.New()
 	e.Debug = false
 	e.Logger.SetLevel(log.ERROR)
@@ -1205,6 +1203,13 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
+	tx, err := db.Beginx()
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+	defer tx.Rollback()
+
 	for _, cond := range req {
 		timestamp := time.Unix(cond.Timestamp, 0)
 
@@ -1212,74 +1217,25 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
-		postIsuConditionChan <- PostIsuConditionRequestWithJIAIsuUUID{
-			JIAIsuUUID: jiaIsuUUID,
-			Timestamp:  timestamp,
-			IsSitting:  cond.IsSitting,
-			Condition:  cond.Condition,
-			Message:    cond.Message,
+		_, err = tx.Exec(
+			"INSERT INTO `isu_condition`"+
+				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+				"	VALUES (?, ?, ?, ?, ?)",
+			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return c.NoContent(http.StatusInternalServerError)
 		}
+
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
 	}
 
 	return c.NoContent(http.StatusAccepted)
-}
-
-var (
-	postIsuConditionChan = make(chan PostIsuConditionRequestWithJIAIsuUUID, 1000)
-)
-
-type PostIsuConditionRequestWithJIAIsuUUID struct {
-	JIAIsuUUID string    `json:"jia_isu_uuid"`
-	IsSitting  bool      `json:"is_sitting"`
-	Condition  string    `json:"condition"`
-	Message    string    `json:"message"`
-	Timestamp  time.Time `json:"timestamp"`
-}
-
-func postIsuConditionWorker() {
-	reqs := []PostIsuConditionRequestWithJIAIsuUUID{}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	for {
-		select {
-		case req := <-postIsuConditionChan:
-			reqs = append(reqs, req)
-		case <-ticker.C:
-			if len(reqs) == 0 {
-				continue
-			}
-
-			tx, err := db.Beginx()
-			if err != nil {
-				log.Printf("db error: %v", err)
-				continue
-			}
-
-			// bulk insert
-			var values []interface{}
-			for _, req := range reqs {
-				values = append(values, req.JIAIsuUUID, req.Timestamp, req.IsSitting, req.Condition, req.Message)
-			}
-
-			_, err = tx.Exec(
-				"INSERT INTO `isu_condition`"+
-					"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-					"	VALUES "+strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?),", len(values)), ","),
-				values...,
-			)
-			if err != nil {
-				log.Printf("db error: %v", err)
-				continue
-			}
-
-			err = tx.Commit()
-			if err != nil {
-				log.Printf("db error: %v", err)
-				continue
-			}
-
-			reqs = []PostIsuConditionRequestWithJIAIsuUUID{}
-		}
-	}
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
