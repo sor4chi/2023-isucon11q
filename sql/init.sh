@@ -10,11 +10,5 @@ export MYSQL_PWD=${MYSQL_PASS:-isucon}
 export LANG="C.UTF-8"
 cd $CURRENT_DIR
 
-(cat 0_Schema.sql 1_InitData.sql 2_PostQuery.sql | mysql --defaults-file=/dev/null -h 192.168.0.12 -P $MYSQL_PORT -u $MYSQL_USER $MYSQL_DBNAME) &
-P1=$!
-(cat 0_Schema.sql 1_InitData.sql 2_PostQuery.sql | mysql --defaults-file=/dev/null -h 192.168.0.13 -P $MYSQL_PORT -u $MYSQL_USER $MYSQL_DBNAME) &
-P2=$!
-
-wait $P1
-wait $P2
-
+cat 0_Schema.sql 1_InitData.sql 2_PostQuery.sql | mysql --defaults-file=/dev/null -h 192.168.0.12 -P $MYSQL_PORT -u $MYSQL_USER $MYSQL_DBNAME
+cat 0_Schema.sql 1_InitData.sql 2_PostQuery.sql | mysql --defaults-file=/dev/null -h 192.168.0.13 -P $MYSQL_PORT -u $MYSQL_USER $MYSQL_DBNAME

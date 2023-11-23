@@ -1400,7 +1400,7 @@ func postIsuConditionInsertWorker() {
 				_, err := isuConditionDb.NamedExec(
 					"INSERT INTO `isu_condition`"+
 						"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`)"+
-						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message",
+						"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :condition_level, :message)",
 					copyReqs)
 				if err != nil {
 					log.Errorf("db error: %v", err)
